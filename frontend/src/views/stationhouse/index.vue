@@ -3,9 +3,17 @@
     <header class="page-head">
       <div>
         <h2>站房维护管理</h2>
-        <p class="page-desc">维护站房维护记录，围绕记录编号、站点编号、维护类型、维护内容做登记、筛选与状态流转。</p>
+        <p class="page-desc">
+          待安排 → 已安排 → 施工中 → 已完成 → 已验收单向流转，验收退回只回施工中；验收通过后按费用支出快照结算并同步新增仪器检定待办。
+        </p>
       </div>
       <div class="page-actions">
+        <label class="station-scope">
+          当前终端站点
+          <select v-model="session.stationId">
+            <option v-for="code in stationOptions" :key="code" :value="code">{{ code }}</option>
+          </select>
+        </label>
         <button class="btn primary" type="button" @click="openCreate">登记站房维护记录</button>
         <button class="btn" type="button" @click="exportRows">导出站房维护清单</button>
       </div>
@@ -43,11 +51,18 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <span v-if="column === '费用支出' && editingFeeId === Number(row.id)" class="fee-editor">
+              <input v-model="editingFeeValue" class="fee-input" type="number" min="0" step="0.01" />
+              <button class="link" type="button" @click="confirmFeeEdit">保存</button>
+              <button class="link" type="button" @click="cancelFeeEdit">取消</button>
+            </span>
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
             <button
-              v-for="action in actions"
+              v-for="action in actionsFor(row)"
               :key="action"
               class="link"
               type="button"
@@ -55,6 +70,7 @@
             >
               {{ action }}
             </button>
+            <button class="link" type="button" @click="startFeeEdit(row)">调整费用</button>
           </td>
         </tr>
         <tr v-if="!rows.length">
@@ -65,6 +81,7 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条站房维护记录</span>
+      <span v-if="noticeMessage" class="notice-text">{{ noticeMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -78,26 +95,42 @@ import {
   listEntries,
   moduleMeta,
   runAction as applyAction,
+  updateMaintenanceFee,
 } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
+import { useSessionStore } from '@/stores/session'
 
 const meta = moduleMeta('stationhouse')
-const columns = ["记录编号", "站点编号", "维护类型", "维护内容", "维护单位", "维护日期", "费用支出", "维护状态"]
-const actions = ["安排维护", "确认完工", "通过验收"]
-const statuses = ["待安排", "已安排", "施工中", "已完成", "已验收"]
-const stats = [{"label": "待维护项数", "value": 0}, {"label": "施工中项数", "value": 0}, {"label": "本月已验收", "value": 0}]
+const columns = [...meta.fields, '结算费用', '验收人']
+const actions = meta.actions
+const statuses = meta.statuses
+const stats = [{ "label": "待维护项数", "value": 0 }, { "label": "施工中项数", "value": 0 }, { "label": "本月已验收", "value": 0 }]
+
+const session = useSessionStore()
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const noticeMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const stationOptions = ref<string[]>([])
+const editingFeeId = ref<number | null>(null)
+const editingFeeValue = ref('')
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+
+// 按元数据里登记的前置状态过滤按钮，能不能执行仍由 local-service 最终校验。
+function actionsFor(row: EntryRow): string[] {
+  return actions.filter((action) => {
+    const sources = meta.actionSources?.[action]
+    return !sources || sources.includes(String(row.status))
+  })
+}
 
 function resetFilters() {
   filters.value = {}
@@ -114,16 +147,56 @@ function openCreate() {
 
 function runAction(action: string, row: EntryRow) {
   errorMessage.value = ''
-  const result = applyAction(meta.key, Number(row.id), action)
+  noticeMessage.value = ''
+  const result = applyAction(meta.key, Number(row.id), action, {
+    operator: session.operator,
+    stationId: session.stationId,
+  })
+  if (!result.ok) {
+    errorMessage.value = result.message
+    reload()
+    return
+  }
+  noticeMessage.value = result.message
+  reload()
+}
+
+function startFeeEdit(row: EntryRow) {
+  editingFeeId.value = Number(row.id)
+  editingFeeValue.value = String(row['费用支出'] ?? '')
+}
+
+function cancelFeeEdit() {
+  editingFeeId.value = null
+}
+
+function confirmFeeEdit() {
+  if (editingFeeId.value === null) {
+    return
+  }
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  const result = updateMaintenanceFee(editingFeeId.value, Number(editingFeeValue.value))
   if (!result.ok) {
     errorMessage.value = result.message
     return
   }
+  noticeMessage.value = result.message
+  editingFeeId.value = null
   reload()
 }
 
+function loadStationOptions() {
+  const codes = listEntries('station').items
+    .map((row) => String(row['站点编号'] ?? '').trim())
+    .filter((code) => code !== '')
+  stationOptions.value = codes
+  if (!codes.includes(session.stationId)) {
+    session.setStation(codes[0] ?? '')
+  }
+}
+
 function reload() {
-  errorMessage.value = ''
   try {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
@@ -133,5 +206,8 @@ function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  loadStationOptions()
+  reload()
+})
 </script>

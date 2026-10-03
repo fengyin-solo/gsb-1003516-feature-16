@@ -40,6 +40,13 @@ export function listRows(key: string): EntryRow[] {
   return allRows()[key] ?? []
 }
 
+// 写操作前强制重读 localStorage 并刷新缓存：另一个终端（另一个标签页）刚改过的数据这里能立刻看到，
+// 站房维护验收这类「只落一个结论」的并发控制就靠它做先比对再写入。
+export function readFreshRows(key: string): EntryRow[] {
+  cache = readStorage()
+  return cache[key] ?? []
+}
+
 export function saveRows(key: string, rows: EntryRow[]): void {
   const next = { ...allRows(), [key]: rows }
   cache = next

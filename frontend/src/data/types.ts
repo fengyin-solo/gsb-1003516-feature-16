@@ -17,7 +17,14 @@ export type ModuleMeta = {
   statuses: string[]
   actions: string[]
   actionTargets: Record<string, string>
+  // 每个动作允许的前置状态：登记了就强制校验，没登记的动作不限制来源状态。
+  actionSources?: Record<string, string[]>
   metrics: string[]
+}
+
+export type ActionContext = {
+  operator?: string
+  stationId?: string
 }
 
 export type PageResult = {
