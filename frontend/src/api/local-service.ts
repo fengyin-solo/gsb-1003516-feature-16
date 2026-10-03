@@ -43,6 +43,13 @@ export function runAction(key: string, id: number, action: string): ActionResult
   if (current === target) {
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
   }
+  const allowedSources = meta.transitions?.[action]
+  if (allowedSources && !allowedSources.includes(current)) {
+    return {
+      ok: false,
+      message: `当前是「${current}」，不能执行「${action}」，请按流程逐步流转`,
+    }
+  }
   const lastStatus = meta.statuses[meta.statuses.length - 1]
   const updated: EntryRow = {
     ...rows[index],

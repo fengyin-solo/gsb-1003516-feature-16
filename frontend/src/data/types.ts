@@ -17,6 +17,8 @@ export type ModuleMeta = {
   statuses: string[]
   actions: string[]
   actionTargets: Record<string, string>
+  // 状态机：动作 => 允许执行该动作的源状态清单；不登记时沿用「任意状态都可流转」的旧行为。
+  transitions?: Record<string, string[]>
   metrics: string[]
 }
 
